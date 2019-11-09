@@ -28,7 +28,7 @@
  */
 
 /* Print Debug Messages */
-#define DEBUG 0
+#define DEBUG 1/
 
 /* Max Line Length in Trace */
 #define LINELENGTH 128
@@ -42,6 +42,9 @@
 #define INDEX 12 /* 18 + 12 = 30 */
 #define OFFSET 2 /* 30 + 2 = 32 */
 
+/* Write Policy */
+#define WRITEBACK 1
+#define WRITETHROUGH 0
 
 /* Typedefs */
 typedef struct Cache_* Cache;

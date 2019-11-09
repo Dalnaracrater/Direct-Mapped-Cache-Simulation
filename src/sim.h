@@ -28,7 +28,7 @@
  */
 
 /* Print Debug Messages */
-#define DEBUG 1/
+#define DEBUG 0
 
 /* Max Line Length in Trace */
 #define LINELENGTH 128

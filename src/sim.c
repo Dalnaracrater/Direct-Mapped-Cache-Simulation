@@ -39,11 +39,7 @@
  *     1. Includes              *
  ********************************/
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <assert.h>
-#include <string.h>
-#include <ctype.h>
+
 #include "sim.h"
 
 /********************************
@@ -61,6 +57,11 @@ struct Block_ {
     int valid;
     char* tag;
     int dirty;
+};
+
+struct Set_ {
+    int head;//head for FIFO
+    Block* blocks;
 };
 
 /* Cache
@@ -88,7 +89,8 @@ struct Cache_ {
     int block_size;
     int numLines;
     int write_policy;
-    Block* blocks;    
+    Block* blocks;
+    Set* sets;
 };
 
 /********************************
@@ -340,22 +342,13 @@ int main(int argc, char **argv){
      * three arguments, print the usage menu and return. 
      */
      
-    printf("HELLO VSCODE!\n");
+    //printf("HELLO VSCODE!\n");
 
     if(argc < 3 || strcmp(argv[1], "-h") == 0){
         fprintf(stderr, 
         "Usage: ./sim [-h] <write policy> <trace file>\n\n<write policy> is one of: \n\twt - simulate a write through cache. \n\twb - simulate a write back cache \n\n<trace file> is the name of a file that contains a memory access trace.\n");
         return 0;
     }
-    
-    /*
-    debug option.
-    */
-    /*if(strcmp(argv[3], "-d") == 0){
-        DEBUG = 1;
-    }else{
-        DEBUG = 0;
-    }*/
 
     /* Write Policy */
     if(strcmp(argv[1], "wt") == 0){
@@ -500,21 +493,18 @@ Cache createCache(int cache_size, int block_size, int write_policy){
     cache->cache_size = CACHE_SIZE;
     cache->block_size = BLOCK_SIZE;
     
-    /* Calculate numLines */
-    cache->numLines = (int)(CACHE_SIZE / BLOCK_SIZE);
-    
-    cache->blocks = (Block*) malloc( sizeof(Block) * cache->numLines );
-    assert(cache->blocks != NULL);
-        
-    /* By default insert blocks where valid = 0 */
-    for(i = 0; i < cache->numLines; i++){
-        cache->blocks[i] = (Block) malloc( sizeof( struct Block_ ) );
-        assert(cache->blocks[i] != NULL);
-        cache->blocks[i]->valid = 0;
-        cache->blocks[i]->dirty = 0;
-        cache->blocks[i]->tag = NULL;
+    cache->sets = (Set *) malloc(sizeof(Set) * 16);
+    for(i = 0; i < 16; i++){//4 way
+        cache->sets[i]->blocks = (Block *)malloc(sizeof(Block) * cache->numLines);
     }
-    
+    for(i = 0; i < 16; i++){
+        for(int j = 0; j < cache->numLines; j++){
+            cache->sets[i]->blocks[j]->valid = 0;
+            cache->sets[i]->blocks[j]->dirty = 0;
+            cache->sets[i]->blocks[j]->tag = 0;
+        }
+    }
+
     return cache;
 }
 
@@ -560,7 +550,7 @@ void destroyCache(Cache cache){
 int readFromCache(Cache cache, char* address)
 {
     unsigned int dec;
-    char *bstring, *bformatted, *tag, *index, *offset;
+    char *bstring, *bformatted, *tag, *set, *offset;
     int i;
     Block block;
     
@@ -588,40 +578,46 @@ int readFromCache(Cache cache, char* address)
         printf("Formatted: %s\n", bformatted);
     }
 
-    tag = (char *) malloc( sizeof(char) * (TAG + 1) );
+    tag = (char *) malloc( sizeof(char) * (KTAG + 1) );
     assert(tag != NULL);
-    tag[TAG] = '\0';
+    tag[KTAG] = '\0';
 
-    for(i = 0; i < TAG; i++){
+    for(i = 0; i < KTAG; i++){
         tag[i] = bformatted[i];
     }
     
-    index = (char *) malloc( sizeof(char) * (INDEX + 1) );
-    assert(index != NULL);
-    index[INDEX] = '\0';
-    
-    for(i = TAG + 1; i < INDEX + TAG + 1; i++){
-        index[i - TAG - 1] = bformatted[i];
+    set = (char *) malloc(sizeof(char) * (4 + 1));
+    assert(set != NULL);
+    set[KWAY] = '\0';
+
+    for(i = KTAG + 1; i < KWAY + KTAG + 1; i++){
+        set[i - KTAG - 1] = bformatted[i];
     }
 
     offset = (char *) malloc( sizeof(char) * (OFFSET + 1) );
     assert(offset != NULL);
     offset[OFFSET] = '\0';
     
-    for(i = INDEX + TAG + 2; i < OFFSET + INDEX + TAG + 2; i++){
-        offset[i - INDEX - TAG - 2] = bformatted[i];
+    for(i = KWAY + KTAG + 2; i < OFFSET + KWAY + KTAG + 2; i++){
+        offset[i - KWAY - TAG - 2] = bformatted[i];
     }
-    
+
+
     if(DEBUG){
         printf("Tag: %s (%i)\n", tag, btoi(tag));
-        printf("Index: %s (%i)\n", index, btoi(index));
+        printf("Set: %s (%i)\n", set, btoi(set));
         printf("Offset: %s (%i)\n", offset, btoi(offset));
     }
     
     /* Get the block */
     
-    block = cache->blocks[btoi(index)];
-    
+    for(int i = 0; i < cache->numLines; i++){
+        if (cache->sets[set]->blocks[i]->tag == tag){
+            block = cache->sets[set]->blocks[i]->tag;
+            break;
+        }
+    }
+
     if(DEBUG){
         printf("Attempting to read data from cache slot %i.\n", btoi(index));
     }
@@ -640,7 +636,7 @@ int readFromCache(Cache cache, char* address)
         }
 
         block->valid = 1;
-        
+
         if(block->tag != NULL){
             free(block->tag);
         }
@@ -670,21 +666,21 @@ int readFromCache(Cache cache, char* address)
 
 int writeToCache(Cache cache, char* address){
     unsigned int dec;
-    char *bstring, *bformatted, *tag, *index, *offset;
+    char *bstring, *bformatted, *tag, *set, *offset;
     int i;
     Block block;
-    
+
     /* Validate inputs */
     if(cache == NULL){
         fprintf(stderr, "Error: Must supply a valid cache to write to.\n");
         return 0;
     }
-    
+
     if(address == NULL){
         fprintf(stderr, "Error: Must supply a valid memory address.\n");
         return 0;
     }
-    
+
     /* Convert and parse necessary values */
     
     dec = htoi(address);
@@ -701,63 +697,80 @@ int writeToCache(Cache cache, char* address){
     tag = (char *) malloc( sizeof(char) * (TAG + 1) );
     assert(tag != NULL);
     tag[TAG] = '\0';
-    
+
     for(i = 0; i < TAG; i++){
         tag[i] = bformatted[i];
     }
-    
-    index = (char *) malloc( sizeof(char) * (INDEX + 1) );
-    assert(index != NULL);
-    index[INDEX] = '\0';
-    
-    for(i = TAG + 1; i < INDEX + TAG + 1; i++){
-        index[i - TAG - 1] = bformatted[i];
+
+    set = (char *) malloc(sizeof(char) * (4 + 1));
+    assert(set != NULL);
+    set[KWAY] = '\0';
+
+    for(i = KTAG + 1; i < KWAY + KTAG + 1; i++){
+        set[i - KTAG - 1] = bformatted[i];
     }
-    
+
     offset = (char *) malloc( sizeof(char) * (OFFSET + 1) );
     assert(offset != NULL);
     offset[OFFSET] = '\0';
-    
+
     for(i = INDEX + TAG + 2; i < OFFSET + INDEX + TAG + 2; i++){
         offset[i - INDEX - TAG - 2] = bformatted[i];
     }
-    
+
     if(DEBUG){
         printf("Tag: %s (%i)\n", tag, btoi(tag));
-        printf("Index: %s (%i)\n", index, btoi(index));
+        printf("Set: %s (%i)\n", set, btoi(set));
         printf("Offset: %s (%i)\n", offset, btoi(offset));
     }
-    
+
     /* Get the block */
-    
-    block = cache->blocks[btoi(index)];
+
+    for(int i = 0; i < cache->numLines; i++){
+        if (cache->sets[btoi(set)]->blocks[i]->tag == tag){
+            block = cache->sets[btoi(set)]->blocks[i]->tag;
+            break;
+        }
+    }
+
+    if (block == NULL){
+        cache->misses++;
+        cache->writes++;
+        cache->reads++;
+
+        cache->sets[btoi(set)]->head = (cache->sets[btoi(set)]->head + 1) % cache->numlines;
+        block = cache->sets[btoi(set)]->blocks[cache->sets[btoi(set)]->head]
+        block->valid = 1;
+        block->tag = tag;
+    }
     
     if(DEBUG){
-        printf("Attempting to write data to cache slot %i.\n", btoi(index));
+        printf("Attempting to write data to cache slot %i.\n", btoi(set));
     }
     
     if(block->valid == 1 && strcmp(block->tag, tag) == 0){
+        cache->hits++;
+
         if(cache->write_policy == WRITETHROUGH){
             cache->writes++;
+        }else{
+            block->dirty = 1;
         }
-        block->dirty = 1;
-        cache->hits++;
+
         free(tag);
     }
     else{
         cache->misses++;
         cache->reads++;
-        
+
         if(cache->write_policy == WRITETHROUGH){
             cache->writes++;
         }
-        
+
         if(cache->write_policy == WRITEBACK && block->dirty == 1){
             cache->writes++;
         }        
-        
-        block->dirty = 1;
-        
+
         block->valid = 1;
         
         if(block->tag != NULL){
@@ -770,7 +783,7 @@ int writeToCache(Cache cache, char* address){
     free(bstring);
     free(bformatted);
     free(offset);
-    free(index);
+    free(set);
     return 1;
 }
 

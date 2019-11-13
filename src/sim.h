@@ -19,6 +19,12 @@
 #ifndef SWIFT_SIM_H_
 #define SWIFT_SIM_H_
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#include <string.h>
+#include <ctype.h>
+
 /* Constants 
  *
  * Both CACHE_SIZE and BLOCK_SIZE are in bytes. We can calculate the number 
@@ -28,12 +34,12 @@
  */
 
 /* Print Debug Messages */
-#define DEBUG 0
+#define DEBUG 1
 
 /* Max Line Length in Trace */
 #define LINELENGTH 128
 
-/* Cache Sizes (in bytes) */
+/* Cache Sizes (in bytes) 4G */
 #define CACHE_SIZE 16384
 #define BLOCK_SIZE 4
 
@@ -46,9 +52,14 @@
 #define WRITEBACK 1
 #define WRITETHROUGH 0
 
+#define KWAY 4 /* pow(2, KWAY) way associative mapping is available*/
+#define KTAG 26
+
 /* Typedefs */
 typedef struct Cache_* Cache;
 typedef struct Block_* Block;
+
+typedef struct SET_* Set;
 
 
 /* createCache
